@@ -1,65 +1,35 @@
-/*#include <Wifi.h>
-#include <WiFiC1ientSecure . h>
-#include "soc/soc.h"
-#include "soc/rtc cntl reg.h"
-#include "esp_camera. h"*/
 
 #include <Wire.h>
-#include <LiquidCrystal_I2C.h>
 #include "esp_camera.h"
 #include "fd_forward.h"
 #include "fr_forward.h"
 #include "dl_lib_matrix3d.h"
 #include "esp_http_server.h"
-#include <ArduinoWebsockets.h>
-using namespace websockets;
-
-// I2C LCD setup
-#define I2C_SDA 1  // IO1/U0T
-#define I2C_SCL 3  // IO3/U0R
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+#include <ArduinoWebsockets.h> //thêm thư viện websockets tương tác html
+#include "esp_http_server.h"
+#include "esp_timer.h"
+#include "camera_index.h"
+#include "Arduino.h"
+#include "fr_flash.h" 
 
 // WebSocket client setup
 WebsocketsClient client;
 
-// Display message on LCD
-void displayMessage(const char* line1, const char* line2 = "") {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(line1);
-    lcd.setCursor(0, 1);
-    lcd.print(line2);
-}
 
-#include <ArduinoWebsockets.h>
-#include "esp_http_server.h"
-#include "esp_timer.h"
-#include "esp_camera.h"
-#include "camera_index.h"
-#include "Arduino.h"
-#include "fd_forward.h"
-#include "fr_forward.h"
-#include "fr_flash.h" 
-
-const char* ssid = "DATK2 - 748492";
+const char* ssid = "DATK2 - 748492"; //Thiết lập tên và địa chỉ wifi cho Camera
 const char* password = "66668888";
-//String token = "7895257779:AAEQjmAI4cu2GrW2fDM3t3UUlm4Mekfz-ZU";
-//String chat_id = "6995041739"
 
 #define ENROLL_CONFIRM_TIMES 5
 #define FACE_ID_SAVE_NUMBER 7
 
-// Select camera model
-//#define CAMERA_MODEL_WROVER_KIT
-//#define CAMERA_MODEL_ESP_EYE
-//#define CAMERA_MODEL_M5STACK_PSRAM
-//#define CAMERA_MODEL_M5STACK_WIDE
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
 
 using namespace websockets;
-WebsocketsServer socket_server;
+WebsocketsServer socket_server; //websocket để thiết lập giao tiếp giữa cam và web 
 
+
+//Thiết lập các biến và định nghĩa chân
 camera_fb_t * fb = NULL;
 
 long current_millis;
@@ -67,7 +37,7 @@ long last_detected_millis = 0;
 
 #define relay_pin 2
 unsigned long door_opened_millis = 0;
-long interval = 5000;           // open lock for 10 SECONDS
+long interval = 5000;           // open lock for 5 SECONDS
 bool face_recognised = false;
 
 void app_facenet_main();
@@ -80,7 +50,7 @@ typedef struct
   dl_matrix3d_t *face_id;
 } http_img_process_result;
 
-
+//config cam 
 static inline mtmn_config_t app_mtmn_config()
 {
   mtmn_config_t mtmn_config = {0};
@@ -180,9 +150,11 @@ void setup() {
   sensor_t * s = esp_camera_sensor_get();
   s->set_framesize(s, FRAMESIZE_QVGA);
 
+#if defined(CAMERA_MODEL_AI_THINKER)
+  s->set_vflip(s, 1);
+#endif
 
-
-/*
+/* //Nếu kết nối camera với wifi tĩnh
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -200,6 +172,8 @@ void setup() {
   Serial.println("' to connect");
 }
 */
+
+//Cài đặt cam sử dụng wifi động (access point) để có thể di động
   WiFi.softAP(ssid, password);
   IPAddress IP = WiFi.softAPIP();
 
@@ -238,14 +212,14 @@ void app_httpserver_init ()
   }
 }
 
-void app_facenet_main()
+void app_facenet_main() //load các mặt đã lưu trong esp32-cam
 {
   face_id_name_init(&st_face_list, FACE_ID_SAVE_NUMBER, ENROLL_CONFIRM_TIMES);
   aligned_face = dl_matrix3du_alloc(1, FACE_WIDTH, FACE_HEIGHT, 3);
   read_face_id_from_flash_with_name(&st_face_list);
 }
 
-static inline int do_enrollment(face_id_name_list *face_list, dl_matrix3d_t *new_id)
+static inline int do_enrollment(face_id_name_list *face_list, dl_matrix3d_t *new_id) //đăng ký mặt mới 
 {
   ESP_LOGD(TAG, "START ENROLLING");
   int left_sample_face = enroll_face_id_to_flash_with_name(face_list, new_id, st_name.enroll_name);
@@ -255,7 +229,7 @@ static inline int do_enrollment(face_id_name_list *face_list, dl_matrix3d_t *new
   return left_sample_face;
 }
 
-static esp_err_t send_face_list(WebsocketsClient &client)
+static esp_err_t send_face_list(WebsocketsClient &client) //gửi các mặt lưu trong esp32-cam tới trình duyệt
 {
   client.send("delete_faces"); // tell browser to delete all faces
   face_id_node *head = st_face_list.head;
@@ -268,13 +242,13 @@ static esp_err_t send_face_list(WebsocketsClient &client)
   }
 }
 
-static esp_err_t delete_all_faces(WebsocketsClient &client)
+static esp_err_t delete_all_faces(WebsocketsClient &client) //xoá hết
 {
   delete_face_all_in_flash_with_name(&st_face_list);
   client.send("delete_faces");
 }
 
-void handle_message(WebsocketsClient &client, WebsocketsMessage msg)
+void handle_message(WebsocketsClient &client, WebsocketsMessage msg) //xử lý lệnh từ web để điều khiển cam
 {
   if (msg.data() == "stream") {
     g_state = START_STREAM;
@@ -306,7 +280,7 @@ void handle_message(WebsocketsClient &client, WebsocketsMessage msg)
   }
 }
 
-void open_door(WebsocketsClient &client) {
+void open_door(WebsocketsClient &client) { //gửi xung đk mở khoá
   if (digitalRead(relay_pin) == LOW) {
     digitalWrite(relay_pin, HIGH); //close (energise) relay so door unlocks
     Serial.println("Door Unlocked");
@@ -315,8 +289,8 @@ void open_door(WebsocketsClient &client) {
   }
 }
 
-void loop() {
-  auto client = socket_server.accept();
+void loop() { //hàm loop hoạt động của hệ thống
+  auto client = socket_server.accept(); //thiết đặt websocket
   client.onMessage(handle_message);
   dl_matrix3du_t *image_matrix = dl_matrix3du_alloc(1, 320, 240, 3);
   http_img_process_result out_res = {0};
