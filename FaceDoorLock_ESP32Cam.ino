@@ -100,7 +100,7 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
 
-  digitalWrite(relay_pin, LOW);
+  digitalWrite(relay_pin, LOW); //thiết lập relay mặc định LOW
   pinMode(relay_pin, OUTPUT);
 
   camera_config_t config;
